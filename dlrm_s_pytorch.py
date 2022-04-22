@@ -110,6 +110,145 @@ with warnings.catch_warnings():
 
 exc = getattr(builtins, "IOError", "FileNotFoundError")
 
+# custom_dist --> prob array
+# Custom distribution provided over a small linear subset of [0, 1] corresponding to the normalized distances between
+# the given index value and rest of values (max distance is mapped to 1) is transformed into a distribution over
+# all possible actual distances using interpolation.
+def transform_custom(custom_dist, t):
+
+    n = len(custom_dist)
+    domain = np.linspace(0.0, 1.0, num=n)
+    prob = np.zeros(t)
+    center = int(t / 2)
+    loc = 0
+    dist = domain[loc + 1] - domain[loc]
+    maxdist = center
+    for i in range(center + 1):
+        if i / maxdist > domain[loc + 1]:
+            loc += 1
+            dist = domain[loc + 1] - domain[loc]
+        s = (i/maxdist - domain[loc]) / dist
+        prob[center + i] = (1 - s) * custom_dist[loc] + s * custom_dist[loc + 1]
+        prob[center - i] =  prob[center + i]
+
+    return prob
+
+# Creates multi-index for given distribution. In the case index value is close to the boundary, i.e.
+# close to 0 or T, where [0, T] is a range of index values we apply rejection sampling method:
+# points are sampled and negative or >= T values are discarded, we stop when we get the desired number of valid
+# values.
+# Rejection sampling method passes permutation test. It produces samples from the same distribution as
+# samples produced around far-from-boundary points. For example, let the index range be [0, 100], then for point "10"
+# we get a sample S1. We now produce standard sample at the reference point "50" but restrict it to interval [40, 100],
+# call it S2. Samples S1 + 40 (shifted so that distribution supports coincide) and S2 come from the same distribution
+# over [40, 100].
+
+import torch.distributions as tdist
+def make_new_indices(datacounts, index_dist, custom_dist, M):
+
+    fc = len(datacounts)
+    i2mapped = [{} for _ in range(fc)]  # use this dict to transform lS_i, lS_o: index --> [i1, i2, ...]
+
+    # th is the minimum index range to which multi-index construction is applied
+    # A is size of large pool of numbers sampled from distribution, it's pre-chosen
+    # periodically since calls to np.random.choice() are slow
+    th = 200
+    A = 1000000
+
+    for j in range(fc):
+        if datacounts[j] >= th and datacounts[j] < M:
+            sys.exit(
+                "ERROR: The number of values in multi-index exceeds index range"
+            )
+
+    for j in range(fc):
+
+        T = datacounts[j]
+        if T < th:
+            for i in range(T):
+                i2mapped[j][i] = [i]
+            continue
+        t2 = int(T / 2)
+        if T % 2 == 1:
+            x0 = torch.arange(-t2, t2 + 1)
+        else:
+            x0 = torch.arange(-t2 + 1, t2)
+        xU, xL = x0 + 0.5, x0 - 0.5
+        if len(custom_dist) == 0:
+            if index_dist == "normal":
+                std = 0.1
+                stdj = std * T
+                nd = tdist.Normal(torch.tensor([0.0]), torch.tensor([stdj]))
+                prob = nd.cdf(xU) - nd.cdf(xL)
+            elif index_dist == "uniform":
+                ud = tdist.Uniform(torch.tensor([-t2-1]), torch.tensor([t2+1]))
+                prob = ud.cdf(xU) - ud.cdf(xL)
+        else:
+            prob = transform_custom(custom_dist, len(x0))
+        if not isinstance(prob, np.ndarray):
+            prob = prob.cpu().numpy()
+        prob[prob < 0] = 0
+        prob = prob / np.sum(prob)          # normalize the probabilities so their sum is 1
+        general = np.random.choice(x0, size = A, p = prob, replace=True)
+
+        k = 0
+        for i in range(T):
+            indset = general[k : k + M]
+            t = 2
+            indset = np.unique(indset)
+            indset = indset[np.logical_and(indset >= -i, indset < T - i)]
+            while len(indset) < M:
+                if k + t * M > A:
+                    k = k % A
+                    t = 2
+                    general = np.random.choice(x0, size = A, p = prob, replace=True)
+                    indset2 = general[k : k + M]
+                    indset = np.concatenate((indset, indset2), axis=0)
+                    indset = np.unique(indset)
+                    indset = indset[np.logical_and(indset >= -i, indset < T - i)]
+                else:
+                    indset2 = general[k : k + t * M]
+                    indset = np.concatenate((indset, indset2), axis=0)
+                    indset = np.unique(indset)
+                    indset = indset[np.logical_and(indset >= -i, indset < T - i)]
+                    t += 1
+
+            indset = indset[:M] + i    # always inside [0,T)
+            k += M
+            if k >= A:
+                k = k % A
+                general = np.random.choice(x0, size = A, p = prob, replace=True)
+            i2mapped[j][i] = indset
+            # if i % 50000 == 0:
+            #     print(j, i, i2mapped[j][i])
+
+    return i2mapped
+
+
+def make_new_batch(lS_o, lS_i, i2mapped):
+
+    cf = len(lS_o)
+    lS_o_new = [ [None] for _ in range(cf)]
+    lS_i_new = [ [None] for _ in range(cf)]
+
+    for cat_fea in range(cf):
+        bb = lS_o[cat_fea].shape[0]
+        # print(cat_fea, bb, lS_i[cat_fea].shape[0])
+        lS_o_new[cat_fea] = torch.empty(size=(bb,),dtype=torch.long)
+        lS_i_new[cat_fea] = torch.empty(size=(0,),dtype=torch.long)
+
+        b_ind = lS_i[cat_fea].tolist()
+        M = 1
+        for ind in b_ind:
+            indset = torch.tensor(i2mapped[cat_fea][ind], dtype=torch.long)
+            if M == 1:
+                M = indset.shape[0]
+            lS_i_new[cat_fea] = torch.cat((lS_i_new[cat_fea], indset), dim=0)
+
+        for j in range(bb):
+            lS_o_new[cat_fea][j] = lS_o[cat_fea][j] * M
+
+    return lS_o_new, lS_i_new
 
 def time_wrap(use_gpu):
     if use_gpu:
@@ -756,6 +895,7 @@ def inference(
     device,
     use_gpu,
     log_iter=-1,
+    test_multi_index_batches=None,
 ):
     test_accu = 0
     test_samp = 0
@@ -772,6 +912,10 @@ def inference(
         X_test, lS_o_test, lS_i_test, T_test, W_test, CBPP_test = unpack_batch(
             testBatch
         )
+
+        # use precomputed multi-index map
+        if test_multi_index_batches is not None:
+            lS_o_test, lS_i_test = test_multi_index_batches[i]
 
         # Skip the batch if batch size not multiple of total ranks
         if ext_dist.my_size > 1 and X_test.size(0) % ext_dist.my_size != 0:
@@ -1008,6 +1152,19 @@ def run():
     parser.add_argument("--lr-decay-start-step", type=int, default=0)
     parser.add_argument("--lr-num-decay-steps", type=int, default=0)
 
+    # multi-index options
+    parser.add_argument("--index-split-dist", type=str, default="uniform")  # normal, uniform or custom
+    parser.add_argument("--index-split-num", type=int, default=1)
+    # Custom distribution over the set of distances between indices normalized to [0, 1]. For example, if the number
+    # of distinct values for index is 10, then max distance is 9, and the interval [0, 9] is normalized to [0, 1].
+    # Example of custom distribution over [0, 1] is "1.0, 0.0, 0.0" which would define a distribution concentrated
+    # near each index value.
+    # The more values are provided in the string the more fine-grained the distribution will be. The above example
+    # would interpolate between ponts 0, 0.5 and 1, while "1.0, 0.0, 0.0, 0.0" would interpolate
+    # between 0, 1/3, 2/3 and 1 and so on. After interpolation the result will be normalized so that the sum is 1,
+    # making it a valid distribution (given by pmf).
+    parser.add_argument("--index-split-custom-dist", type=str, default="")   # custom distribution
+
     global args
     global nbatches
     global nbatches_test
@@ -1087,8 +1244,11 @@ def run():
         mlperf_logger.log_start(key=mlperf_logger.constants.RUN_START)
         mlperf_logger.barrier()
 
+    test_ld = None
     if args.data_generation == "dataset":
-        train_data, train_ld, test_data, test_ld = dp.make_criteo_data_and_loaders(args)
+        train_data, train_ld, test_data, test_ld = dp.make_criteo_data_and_loaders(
+            args
+        )
         table_feature_map = {idx: idx for idx in range(len(train_data.counts))}
         nbatches = args.num_batches if args.num_batches > 0 else len(train_ld)
         nbatches_test = len(test_ld)
@@ -1112,9 +1272,30 @@ def run():
         # input and target at random
         ln_emb = np.fromstring(args.arch_embedding_size, dtype=int, sep="-")
         m_den = ln_bot[0]
-        train_data, train_ld, test_data, test_ld = dp.make_random_data_and_loader(args, ln_emb, m_den)
+        train_data, train_ld = dp.make_random_data_and_loader(args, ln_emb, m_den)
         nbatches = args.num_batches if args.num_batches > 0 else len(train_ld)
-        nbatches_test = len(test_ld)
+        table_feature_map = {idx: idx for idx in range(len(ln_emb))}
+
+    # multi-index processing
+    M = args.index_split_num
+    index_dist = args.index_split_dist
+    custom_dist = np.fromstring(args.index_split_custom_dist, dtype=np.float, sep=",")
+    test_multi_index_batches = None
+    i2mapped = None
+    if  M > 1:
+        print(ln_emb)
+        i2mapped = make_new_indices(ln_emb, index_dist, custom_dist, M)
+        # precompute test batches here
+        if test_ld is not None:
+            test_multi_index_batches = [None] * nbatches_test
+            for i, testBatch in enumerate(test_ld):
+                if i >= nbatches_test:
+                    break
+
+                _, lS_o_test, lS_i_test, _, _, _ = unpack_batch(
+                    testBatch
+                )
+                test_multi_index_batches[i] = make_new_batch(lS_o_test, lS_i_test, i2mapped)
 
     args.ln_emb = ln_emb.tolist()
     if args.mlperf_logging:
@@ -1547,6 +1728,10 @@ def run():
 
                     mbs = T.shape[0]  # = args.mini_batch_size except maybe for last
 
+                    if i2mapped is not None:
+                        lS_o, lS_i = make_new_batch(lS_o, lS_i, i2mapped)
+
+
                     # forward pass
                     Z = dlrm_wrap(
                         X,
@@ -1667,6 +1852,7 @@ def run():
                             device,
                             use_gpu,
                             log_iter,
+                            test_multi_index_batches,
                         )
 
                         if (
@@ -1759,6 +1945,8 @@ def run():
                 test_ld,
                 device,
                 use_gpu,
+                -1,
+                test_multi_index_batches,
             )
 
     # profiling
@@ -1870,8 +2058,32 @@ def run():
         dlrm_pytorch_onnx = onnx.load("dlrm_s_pytorch.onnx")
         # check the onnx model
         onnx.checker.check_model(dlrm_pytorch_onnx)
-    total_time_end = time_wrap(use_gpu)
+    # total_time_end = time_wrap(use_gpu)
 
 
 if __name__ == "__main__":
+    if False:
+        sys.argv = ['dlrm_s_pytorch.py',
+            '--arch-sparse-feature-size=16',
+            '--arch-mlp-bot=13-512-256-64-16',
+            '--arch-mlp-top=512-256-1',
+            #'--data-generation=dataset',
+            '--data-generation=random',
+            '--data-set=kaggle',
+            '--raw-data-file=/home/ubuntu/mountpoint/kaggle/train.txt',
+            '--processed-data-file=/home/ubuntu/mountpoint/kaggle/kaggleAdDisplayChallenge_processed.npz',
+            '--loss-function=bce',
+            '--round-targets=True',
+            '--learning-rate=0.1',
+            '--mini-batch-size=128',
+            '--num-batches=10',
+            '--print-freq=1024',
+            '--print-time',
+            '--test-mini-batch-size=16384',
+            '--test-num-workers=16',
+            #'--mlperf-logging',
+            '--tensor-board-filename=multiIndexTest'
+            #'--index-split-dist=normal',
+            #'--index-split-num=10'
+            ]
     run()
