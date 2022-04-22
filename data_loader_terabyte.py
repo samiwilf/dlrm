@@ -94,14 +94,12 @@ def _batch_generator(
     for day in days:
         filepath = os.path.join(
             data_directory,
-            data_filename + "_{}_reordered.npz".format(day)
+            data_filename + "_{}_reordered".format(day)
         )
 
-        # print('Loading file: ', filepath)
-        with np.load(filepath) as data:
-            x_int = data["X_int"]
-            x_cat = data["X_cat"]
-            y = data["y"]
+        x_int = np.load(filepath + "_int.npy", mmap_mode="r")
+        x_cat = np.load(filepath + "_cat.npy", mmap_mode="r")
+        y = np.load(filepath + "_y.npy", mmap_mode="r")
 
         samples_in_file = y.shape[0]
         batch_start_idx = 0
@@ -316,7 +314,7 @@ def _test_bin():
     dataset_binary = CriteoBinDataset(data_file=binary_data_file,
                                             counts_file=counts_file,
                                             batch_size=2048,)
-    from dlrm_data_pytorch import CriteoDataset 
+    from dlrm_data_pytorch import CriteoDataset
     from dlrm_data_pytorch import collate_wrapper_criteo_offset as collate_wrapper_criteo
 
     binary_loader = torch.utils.data.DataLoader(
