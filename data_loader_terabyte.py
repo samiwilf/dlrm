@@ -96,7 +96,7 @@ def _batch_generator(
             data_directory,
             data_filename + "_{}_reordered".format(day)
         )
-
+        print("loading filepath")
         x_int = np.load(filepath + "_int.npy", mmap_mode="r")
         x_cat = np.load(filepath + "_cat.npy", mmap_mode="r")
         y = np.load(filepath + "_y.npy", mmap_mode="r")
