@@ -532,7 +532,7 @@ def main(argv: List[str]) -> None:
     )
     dense_optimizer = KeyedOptimizerWrapper(
         dict(model.named_parameters()),
-        lambda params: torch.optim.SGD(params, lr=args.learning_rate),
+        lambda params: torch.optim.Adagrad(params, lr=args.learning_rate),
     )
     optimizer = CombinedOptimizer([model.fused_optimizer, dense_optimizer])
 
