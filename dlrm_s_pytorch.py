@@ -112,7 +112,7 @@ exc = getattr(builtins, "IOError", "FileNotFoundError")
 
 
 def make_cache(ln_emb, index_split_num, batch_size):
-    sigma_np = np.array([rows_count//5 for rows_count in ln_emb])
+    sigma_np = np.array([rows_count//20 for rows_count in ln_emb])
     mu_np = np.array([0.0 for _ in ln_emb])
     cache_l = [np.random.normal(mu_np,sigma_np, size=(index_split_num - 1, len(mu_np))) for _ in range(batch_size)]
     for i, cache in enumerate(cache_l):
@@ -131,13 +131,13 @@ def make_new_batch(lS_o, lS_i, caches, ln_emb, index_split_num):
     lS_o_new = []
     for k, e in enumerate(ln_emb):
 
-        b = lS_i[k][:].numpy()
+        b = lS_i[k,:].numpy()
         b = np.repeat(b[:, np.newaxis], index_split_num, axis=-1)
 
-        if False:
-            a = caches[0:batch_size,:,k]
+        if True:
+            a = caches[:batch_size,:,k]
         else:
-            a = caches[0,:,k]
+            a = caches[0,:,0]
             a = np.repeat(a[np.newaxis, :], batch_size, axis=0)
 
         c = a + b
