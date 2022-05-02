@@ -134,10 +134,10 @@ def make_new_batch(lS_o, lS_i, caches, ln_emb, index_split_num):
         b = lS_i[k,:].numpy()
         b = np.repeat(b[:, np.newaxis], index_split_num, axis=-1)
 
-        if True:
+        if False:
             a = caches[:batch_size,:,k]
         else:
-            a = caches[0,:,0]
+            a = caches[0,:,k]
             a = np.repeat(a[np.newaxis, :], batch_size, axis=0)
 
         c = a + b
