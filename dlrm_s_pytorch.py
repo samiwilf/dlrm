@@ -110,6 +110,47 @@ with warnings.catch_warnings():
 
 exc = getattr(builtins, "IOError", "FileNotFoundError")
 
+
+def make_cache(ln_emb, index_split_num, batch_size):
+    sigma_np = np.array([rows_count//5 for rows_count in ln_emb])
+    mu_np = np.array([0.0 for _ in ln_emb])
+    cache_l = [np.random.normal(mu_np,sigma_np, size=(index_split_num - 1, len(mu_np))) for _ in range(batch_size)]
+    for i, cache in enumerate(cache_l):
+        for k, e in enumerate(ln_emb):
+            if e < 200:
+                cache[:,k]=float('-inf')
+        cache = np.append(mu_np[np.newaxis,:], cache, axis=0)
+        cache_l[i] = np.sort(cache, axis=0)
+    caches = np.stack(cache_l)
+    return caches
+
+def make_new_batch(lS_o, lS_i, caches, ln_emb, index_split_num):
+    cf = len(lS_o)
+    batch_size = len(lS_i[0])
+    multi_hot_i_l = []
+    lS_o_new = []
+    for k, e in enumerate(ln_emb):
+
+        b = lS_i[k][:].numpy()
+        b = np.repeat(b[:, np.newaxis], index_split_num, axis=-1)
+
+        if False:
+            a = caches[0:batch_size,:,k]
+        else:
+            a = caches[0,:,k]
+            a = np.repeat(a[np.newaxis, :], batch_size, axis=0)
+
+        c = a + b
+
+        offsets = np.sum( np.logical_and(c >= 0, c < ln_emb[k]), axis = -1)
+        indices = c[ np.logical_and(c>=0, c < ln_emb[k]) ]
+
+        lS_o_new.append(torch.cumsum( torch.concat((torch.tensor([0]), torch.tensor(offsets[:-1]).int())), axis=0))
+        multi_hot_i_l.append(torch.Tensor(indices).int())
+    return lS_o_new, multi_hot_i_l
+
+
+
 # custom_dist --> prob array
 # Custom distribution provided over a small linear subset of [0, 1] corresponding to the normalized distances between
 # the given index value and rest of values (max distance is mapped to 1) is transformed into a distribution over
@@ -144,7 +185,7 @@ def transform_custom(custom_dist, t):
 # over [40, 100].
 
 import torch.distributions as tdist
-def make_new_indices(datacounts, index_dist, custom_dist, M):
+def make_new_indices_old_unused(datacounts, index_dist, custom_dist, M):
 
     fc = len(datacounts)
     i2mapped = [{} for _ in range(fc)]  # use this dict to transform lS_i, lS_o: index --> [i1, i2, ...]
@@ -225,7 +266,7 @@ def make_new_indices(datacounts, index_dist, custom_dist, M):
     return i2mapped
 
 
-def make_new_batch(lS_o, lS_i, i2mapped):
+def make_new_batch_old_unused(lS_o, lS_i, i2mapped):
 
     cf = len(lS_o)
     lS_o_new = [ [None] for _ in range(cf)]
@@ -896,6 +937,8 @@ def inference(
     use_gpu,
     log_iter=-1,
     test_multi_index_batches=None,
+    caches=None,
+    ln_emb=None,
 ):
     test_accu = 0
     test_samp = 0
@@ -912,10 +955,12 @@ def inference(
         X_test, lS_o_test, lS_i_test, T_test, W_test, CBPP_test = unpack_batch(
             testBatch
         )
+        if args.index_split_num > 1:
+            lS_o_test, lS_i_test = make_new_batch(lS_o_test, lS_i_test, caches, ln_emb, args.index_split_num)
 
         # use precomputed multi-index map
-        if test_multi_index_batches is not None:
-            lS_o_test, lS_i_test = test_multi_index_batches[i]
+        # if test_multi_index_batches is not None:
+        #     lS_o_test, lS_i_test = test_multi_index_batches[i]
 
         # Skip the batch if batch size not multiple of total ranks
         if ext_dist.my_size > 1 and X_test.size(0) % ext_dist.my_size != 0:
@@ -1276,26 +1321,29 @@ def run():
         nbatches = args.num_batches if args.num_batches > 0 else len(train_ld)
         table_feature_map = {idx: idx for idx in range(len(ln_emb))}
 
-    # multi-index processing
-    M = args.index_split_num
-    index_dist = args.index_split_dist
-    custom_dist = np.fromstring(args.index_split_custom_dist, dtype=np.float, sep=",")
-    test_multi_index_batches = None
-    i2mapped = None
-    if  M > 1:
-        print(ln_emb)
-        i2mapped = make_new_indices(ln_emb, index_dist, custom_dist, M)
-        # precompute test batches here
-        if test_ld is not None:
-            test_multi_index_batches = [None] * nbatches_test
-            for i, testBatch in enumerate(test_ld):
-                if i >= nbatches_test:
-                    break
+    caches = make_cache(ln_emb, args.index_split_num, max(args.mini_batch_size, args.test_mini_batch_size))
 
-                _, lS_o_test, lS_i_test, _, _, _ = unpack_batch(
-                    testBatch
-                )
-                test_multi_index_batches[i] = make_new_batch(lS_o_test, lS_i_test, i2mapped)
+
+    # multi-index processing
+    # M = args.index_split_num
+    # index_dist = args.index_split_dist
+    # custom_dist = np.fromstring(args.index_split_custom_dist, dtype=np.float, sep=",")
+    # test_multi_index_batches = None
+    # i2mapped = None
+    # if  M > 1:
+    #     print(ln_emb)
+    #     i2mapped = make_new_indices(ln_emb, index_dist, custom_dist, M)
+    #     # precompute test batches here
+    #     if test_ld is not None:
+    #         test_multi_index_batches = [None] * nbatches_test
+    #         for i, testBatch in enumerate(test_ld):
+    #             if i >= nbatches_test:
+    #                 break
+    #
+    #             _, lS_o_test, lS_i_test, _, _, _ = unpack_batch(
+    #                 testBatch
+    #             )
+    #             test_multi_index_batches[i] = make_new_batch(lS_o_test, lS_i_test, i2mapped)
 
     args.ln_emb = ln_emb.tolist()
     if args.mlperf_logging:
@@ -1698,12 +1746,15 @@ def run():
                 for j, inputBatch in enumerate(train_ld):
                     if j == 0 and args.save_onnx:
                         X_onnx, lS_o_onnx, lS_i_onnx, _, _, _ = unpack_batch(inputBatch)
+                        if args.index_split_num > 1:
+                            lS_o_onnx, lS_i_onnx = make_new_batch(lS_o_onnx, lS_i_onnx, caches, ln_emb, args.index_split_num)
 
                     if j < skip_upto_batch:
                         continue
 
                     X, lS_o, lS_i, T, W, CBPP = unpack_batch(inputBatch)
-
+                    if args.index_split_num > 1:
+                        lS_o, lS_i = make_new_batch(lS_o, lS_i, caches, ln_emb, args.index_split_num)
                     if args.mlperf_logging:
                         current_time = time_wrap(use_gpu)
                         if previous_iteration_time:
@@ -1728,9 +1779,8 @@ def run():
 
                     mbs = T.shape[0]  # = args.mini_batch_size except maybe for last
 
-                    if i2mapped is not None:
-                        lS_o, lS_i = make_new_batch(lS_o, lS_i, i2mapped)
-
+                    #if i2mapped is not None:
+                    #    lS_o, lS_i = make_new_batch(lS_o, lS_i, i2mapped)
 
                     # forward pass
                     Z = dlrm_wrap(
@@ -1852,7 +1902,9 @@ def run():
                             device,
                             use_gpu,
                             log_iter,
-                            test_multi_index_batches,
+                            test_multi_index_batches=None,
+                            caches=caches,
+                            ln_emb=ln_emb,
                         )
 
                         if (
@@ -2062,13 +2114,13 @@ def run():
 
 
 if __name__ == "__main__":
-    if False:
+    if True:
         sys.argv = ['dlrm_s_pytorch.py',
             '--arch-sparse-feature-size=16',
             '--arch-mlp-bot=13-512-256-64-16',
             '--arch-mlp-top=512-256-1',
-            #'--data-generation=dataset',
-            '--data-generation=random',
+            '--data-generation=dataset',
+            #'--data-generation=random',
             '--data-set=kaggle',
             '--raw-data-file=/home/ubuntu/mountpoint/kaggle/train.txt',
             '--processed-data-file=/home/ubuntu/mountpoint/kaggle/kaggleAdDisplayChallenge_processed.npz',
@@ -2076,14 +2128,16 @@ if __name__ == "__main__":
             '--round-targets=True',
             '--learning-rate=0.1',
             '--mini-batch-size=128',
-            '--num-batches=10',
+            #'--num-batches=10',
             '--print-freq=1024',
             '--print-time',
             '--test-mini-batch-size=16384',
             '--test-num-workers=16',
+            '--use-gpu',
             #'--mlperf-logging',
-            '--tensor-board-filename=multiIndexTest'
-            #'--index-split-dist=normal',
-            #'--index-split-num=10'
+            '--test-freq=30000',
+            '--tensor-board-filename=multi-hot-10-normal-on-the-fly-test'
+            '--index-split-dist=normal',
+            '--index-split-num=10'
             ]
     run()
