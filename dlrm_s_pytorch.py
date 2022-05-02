@@ -2114,7 +2114,7 @@ def run():
 
 
 if __name__ == "__main__":
-    if True:
+    if False:
         sys.argv = ['dlrm_s_pytorch.py',
             '--arch-sparse-feature-size=16',
             '--arch-mlp-bot=13-512-256-64-16',
