@@ -41,6 +41,8 @@ class DLRMModelConfig:
     num_embeddings_per_feature: List[int]
     num_embeddings: int
     over_arch_layer_sizes: List[int]
+    interaction_branch1_layer_sizes: List[int]
+    interaction_branch2_layer_sizes: List[int]
 
 
 class DLRMPredictModule(PredictModule):
@@ -66,6 +68,8 @@ class DLRMPredictModule(PredictModule):
         dense_in_features: int,
         dense_arch_layer_sizes: List[int],
         over_arch_layer_sizes: List[int],
+        interaction_branch1_layer_sizes: List[int],
+        interaction_branch2_layer_sizes: List[int],
         id_list_features_keys: List[str],
         dense_device: Optional[torch.device] = None,
     ) -> None:
@@ -74,6 +78,8 @@ class DLRMPredictModule(PredictModule):
             dense_in_features=dense_in_features,
             dense_arch_layer_sizes=dense_arch_layer_sizes,
             over_arch_layer_sizes=over_arch_layer_sizes,
+            interaction_branch1_layer_sizes=interaction_branch1_layer_sizes,
+            interaction_branch2_layer_sizes=interaction_branch2_layer_sizes,
             dense_device=dense_device,
         )
         super().__init__(module, dense_device)
@@ -139,6 +145,8 @@ class DLRMPredictFactory(PredictFactory):
             dense_in_features=self.model_config.dense_in_features,
             dense_arch_layer_sizes=self.model_config.dense_arch_layer_sizes,
             over_arch_layer_sizes=self.model_config.over_arch_layer_sizes,
+            interaction_branch1_layer_sizes=self.model.interaction_branch1_layer_sizes,
+            interaction_branch2_layer_sizes=self.model.interaction_branch2_layer_sizes,
             dense_device=device,
         )
         module = quantize_embeddings(module, dtype=torch.qint8, inplace=True)
