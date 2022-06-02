@@ -680,9 +680,9 @@ class DLRM_Net(nn.Module):
                 V0_n = nn.functional.softmax(V0, dim = -1)
                 V1_n = nn.functional.softmax(V1, dim = -1)
                 V2_n = V2.clone()
-                V0_n = nn.functional.dropout(V0_n, p=0.80, training=True, inplace=False)
-                V1_n = nn.functional.dropout(V1_n, p=0.80, training=True, inplace=False)
-                V2_n = nn.functional.dropout(V2_n, p=0.80, training=True, inplace=False)
+                V0_n = nn.functional.dropout(V0_n, p=0.50, training=True, inplace=False)
+                V1_n = nn.functional.dropout(V1_n, p=0.50, training=True, inplace=False)
+                V2_n = nn.functional.dropout(V2_n, p=0.50, training=True, inplace=False)
 
                 a = 1 + torch.sum(V0_n * V1_n, dim=-1)
                 b = 1 + torch.sum(V0_n + V1_n, dim=-1)
@@ -690,12 +690,13 @@ class DLRM_Net(nn.Module):
                 b = b.clone()
                 AttentionFactor = b / a #nn.functional.sigmoid(a / (1 + b))
 
-                V = V0_n * V1_n * V2_n
+                V = (V0_n * V1_n) * V2_n
 
-                V[:,:] *= AttentionFactor.view(-1, 1)
+                VV = V2_n * AttentionFactor.view(-1, 1)
+                VV = VV.clone()
                 #V[:,:] *= nn.functional.normalize(AttentionFactor, dim=-1).view(-1, 1)# / 10.0
-
-                V = V.reshape(v_shape)
+                V = torch.cat((V0_n,V,VV), dim=-1)
+                #V = V.reshape(v_shape)
 
                 # V_copy[:,:] *= nn.functional.softmax(AttentionFactor, dim=-1).view(-1, 1)
                 #
@@ -2227,7 +2228,7 @@ if __name__ == "__main__":
             '--arch-mlp-bot=13-512-256-126',
             '--arch-mlp-top=1024-1024-512-256-1',
             '--arch-sparse-feature-size=126',
-            '--learning-rate=0.2',
+            '--learning-rate=3.02',
             '--mlperf-logging',
             '--raw-data-file=/home/ubuntu/mountpoint/criteo_terabyte_subsample0.0_maxind40M/day',
             '--processed-data-file=/home/ubuntu/mountpoint/criteo_terabyte_subsample0.0_maxind40M/',
