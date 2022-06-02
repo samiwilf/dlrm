@@ -377,29 +377,35 @@ class DLRM_Net(nn.Module):
         # build MLP layer by layer
         layers = nn.ModuleList()
         for i in range(0, ln.size - 1):
+            print(f"creating mlp {i}")
             n = ln[i]
             m = ln[i + 1]
 
             # construct fully connected operator
-            LL = nn.Linear(int(n), int(m), bias=True)
+            LL = nn.Linear(int(n), int(m), bias=True, device='cuda')
+            LL.weight.requires_grad = True
+            LL.bias.requires_grad = True
+            # LL.weight.data.requires_grad = True
+            # LL.bias.data.requires_grad = True
 
-            # initialize the weights
-            # with torch.no_grad():
-            # custom Xavier input, output or two-sided fill
-            mean = 0.0  # std_dev = np.sqrt(variance)
-            std_dev = np.sqrt(2 / (m + n))  # np.sqrt(1 / m) # np.sqrt(1 / n)
-            W = np.random.normal(mean, std_dev, size=(m, n)).astype(np.float32)
-            std_dev = np.sqrt(1 / m)  # np.sqrt(2 / (m + 1))
-            bt = np.random.normal(mean, std_dev, size=m).astype(np.float32)
-            # approach 1
-            LL.weight.data = torch.tensor(W, requires_grad=True)
-            LL.bias.data = torch.tensor(bt, requires_grad=True)
-            # approach 2
-            # LL.weight.data.copy_(torch.tensor(W))
-            # LL.bias.data.copy_(torch.tensor(bt))
-            # approach 3
-            # LL.weight = Parameter(torch.tensor(W),requires_grad=True)
-            # LL.bias = Parameter(torch.tensor(bt),requires_grad=True)
+            if False:
+                # initialize the weights
+                # with torch.no_grad():
+                # custom Xavier input, output or two-sided fill
+                mean = 0.0  # std_dev = np.sqrt(variance)
+                std_dev = np.sqrt(2 / (m + n))  # np.sqrt(1 / m) # np.sqrt(1 / n)
+                W = np.random.normal(mean, std_dev, size=(m, n)).astype(np.float32)
+                std_dev = np.sqrt(1 / m)  # np.sqrt(2 / (m + 1))
+                bt = np.random.normal(mean, std_dev, size=m).astype(np.float32)
+                # approach 1
+                LL.weight.data = torch.tensor(W, requires_grad=True)
+                LL.bias.data = torch.tensor(bt, requires_grad=True)
+                # approach 2
+                # LL.weight.data.copy_(torch.tensor(W))
+                # LL.bias.data.copy_(torch.tensor(bt))
+                # approach 3
+                # LL.weight = Parameter(torch.tensor(W),requires_grad=True)
+                # LL.bias = Parameter(torch.tensor(bt),requires_grad=True)
             layers.append(LL)
 
             # construct sigmoid or relu operator
@@ -421,7 +427,7 @@ class DLRM_Net(nn.Module):
                 if i not in self.local_emb_indices:
                     continue
             n = ln[i]
-
+            print(f"creating emb {i}")
             # construct embedding operator
             if self.qr_flag and n > self.qr_threshold:
                 EE = QREmbeddingBag(
@@ -442,18 +448,40 @@ class DLRM_Net(nn.Module):
                 ).astype(np.float32)
                 EE.embs.weight.data = torch.tensor(W, requires_grad=True)
             else:
-                EE = nn.EmbeddingBag(n, m, mode="sum", sparse=True)
-                # initialize embeddings
-                # nn.init.uniform_(EE.weight, a=-np.sqrt(1 / n), b=np.sqrt(1 / n))
-                W = np.random.uniform(
-                    low=-np.sqrt(1 / n), high=np.sqrt(1 / n), size=(n, m)
-                ).astype(np.float32)
-                # approach 1
-                EE.weight.data = torch.tensor(W, requires_grad=True)
-                # approach 2
-                # EE.weight.data.copy_(torch.tensor(W))
-                # approach 3
-                # EE.weight = Parameter(torch.tensor(W),requires_grad=True)
+
+                device = torch.device('cuda')
+                EE = nn.EmbeddingBag(
+                    n,
+                    m,
+                    mode="sum",
+                    sparse=True,
+                    device=device,
+                    _weight=torch.empty(
+                        n,
+                        m,
+                        device=device,
+                    ).uniform_(
+                        float(-np.sqrt(1 / n)),
+                        float(np.sqrt(1 / n)),
+                    ),
+                )
+                EE.weight.requires_grad = True
+
+                # EE = nn.EmbeddingBag(n, m, mode="sum", sparse=True, device='cuda')
+                # EE.weight.requires_grad = True
+                # EE.weight.data.requires_grad = True
+                if False:
+                    # initialize embeddings
+                    # nn.init.uniform_(EE.weight, a=-np.sqrt(1 / n), b=np.sqrt(1 / n))
+                    W = np.random.uniform(
+                        low=-np.sqrt(1 / n), high=np.sqrt(1 / n), size=(n, m)
+                    ).astype(np.float32)
+                    # approach 1
+                    EE.weight.data = torch.tensor(W, requires_grad=True)
+                    # approach 2
+                    # EE.weight.data.copy_(torch.tensor(W))
+                    # approach 3
+                    # EE.weight = Parameter(torch.tensor(W),requires_grad=True)
             if weighted_pooling is None:
                 v_W_l.append(None)
             else:
@@ -1509,6 +1537,8 @@ def run():
         loss_function=args.loss_function
     )
 
+    print ("\n\n\n FINISHED CONSTRUCTING MODEL!!!! \n\n\n")
+
     # test prints
     if args.debug_mode:
         print("initial parameters (weights and bias):")
@@ -1541,8 +1571,8 @@ def run():
             dlrm.top_l = ext_dist.DDP(dlrm.top_l)
 
     if not args.inference_only:
-        if use_gpu and args.optimizer in ["rwsadagrad", "adagrad"]:
-            sys.exit("GPU version of Adagrad is not supported by PyTorch.")
+        # if use_gpu and args.optimizer in ["rwsadagrad", "adagrad"]:
+        #     sys.exit("GPU version of Adagrad is not supported by PyTorch.")
         # specify the optimizer algorithm
         opts = {
             "sgd": torch.optim.SGD,
@@ -2140,4 +2170,29 @@ if __name__ == "__main__":
             '--index-split-dist=normal',
             '--index-split-num=10'
             ]
+    sys.argv = ['dlrm_s_pytorch.py',
+            '--data-generation=dataset',
+            '--data-set=terabyte',
+            '--mini-batch-size=2048',
+            '--arch-mlp-bot=13-512-256-128',
+            '--arch-mlp-top=1024-1024-512-256-1',
+            '--arch-sparse-feature-size=128',
+            '--learning-rate=1.0',
+            '--mlperf-logging',
+            '--raw-data-file=/home/ubuntu/mountpoint/criteo_terabyte_subsample0.0_maxind40M/day',
+            '--processed-data-file=/home/ubuntu/mountpoint/criteo_terabyte_subsample0.0_maxind40M/',
+            '--memory-map',
+            '--loss-function=bce',
+            '--test-mini-batch-size=16384',
+            '--print-freq=1024',
+            '--print-time',
+            '--nepoch=1',
+            '--max-ind-range=40000000',
+            '--test-num-workers=16',
+            '--test-freq=30000',
+            '--use-gpu',
+            # '--index-split-dist=normal',
+            # '--index-split-num=40',
+            # '--tensor-board-filename=regular_one_hot_tb_dataset',
+        ]
     run()

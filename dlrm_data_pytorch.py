@@ -15,12 +15,12 @@
 #    ii) Criteo Terabyte Dataset
 #    https://labs.criteo.com/2013/12/download-terabyte-click-logs
 
-
 from __future__ import absolute_import, division, print_function, unicode_literals
 
 # others
 from os import path
 import sys
+import functools
 import bisect
 import collections
 
@@ -93,7 +93,7 @@ class CriteoDataset(Dataset):
         data_ready = True
         if memory_map:
             for i in range(days):
-                reo_data = self.npzfile + "_{0}_reordered.npz".format(i)
+                reo_data = self.npzfile + "_{}_reordered.npz".format(i)
                 if not path.exists(str(reo_data)):
                     data_ready = False
         else:
@@ -195,18 +195,34 @@ class CriteoDataset(Dataset):
                 fi = self.npzfile + "_{0}_reordered.npz".format(
                     self.day
                 )
-                with np.load(fi) as data:
-                    self.X_int = data["X_int"]  # continuous  feature
-                    self.X_cat = data["X_cat"]  # categorical feature
-                    self.y = data["y"]          # target
+                #with np.load(fi) as data:
+                #    self.X_int = data["X_int"]  # continuous  feature
+                #    self.X_cat = data["X_cat"]  # categorical feature
+                #    self.y = data["y"]          # target
+
+                print("Loading test or val split using mmap_mode!!")
+                filepath = fi
+                self.X_int = np.load(filepath[:-4] + "_int.npy", mmap_mode='r')
+                self.X_cat = np.load(filepath[:-4] + "_cat.npy", mmap_mode='r')
+                self.y = np.load(filepath[:-4] + "_y.npy", mmap_mode='r')
+                print("DONE Loading test or val split using mmap_mode!!")
 
         else:
             # load and preprocess data
+
+            print("Loading in dlrm_data_pytorch training set using mmap_mode!!")
+            filepath = file
+            X_int = np.load(filepath[:-4] + "_int.npy", mmap_mode='r')
+            X_cat = np.load(filepath[:-4] + "_cat.npy", mmap_mode='r')
+            y = np.load(filepath[:-4] + "_y.npy", mmap_mode='r')
+            print("DONE Loading in dlrm_data_pytorch training set using mmap_mode!!")
+            print("loading data counts")
             with np.load(file) as data:
-                X_int = data["X_int"]  # continuous  feature
-                X_cat = data["X_cat"]  # categorical feature
-                y = data["y"]          # target
+            #    X_int = data["X_int"]  # continuous  feature
+            #    X_cat = data["X_cat"]  # categorical feature
+            #    y = data["y"]          # target
                 self.counts = data["counts"]
+            print("DONE loading data counts")
             self.m_den = X_int.shape[1]  # den_fea
             self.n_emb = len(self.counts)
             print("Sparse fea = %d, Dense fea = %d" % (self.n_emb, self.m_den))
@@ -279,10 +295,15 @@ class CriteoDataset(Dataset):
                         self.day
                     )
                     # print('Loading file: ', fi)
-                    with np.load(fi) as data:
-                        self.X_int = data["X_int"]  # continuous  feature
-                        self.X_cat = data["X_cat"]  # categorical feature
-                        self.y = data["y"]          # target
+                    #with np.load(fi) as data:
+                    #    self.X_int = data["X_int"]  # continuous  feature
+                    #    self.X_cat = data["X_cat"]  # categorical feature
+                    #    self.y = data["y"]          # target
+                    print("IN ITERATOR NUMPY FILES ARE LOADING  START!!!!!!!!")
+                    self.X_int = np.load(fi[:-4] + "_int.npy", mmap_mode='r')
+                    self.X_cat = np.load(fi[:-4] + "_cat.npy", mmap_mode='r')
+                    self.y = np.load(fi[:-4] + "_y.npy", mmap_mode='r')
+                    print("IN ITERATOR NUMPY FILES ARE LOADING  DONE!!!!!!!!!")
                     self.day = (self.day + 1) % self.max_day_range
 
                 i = index - self.day_boundary
@@ -502,7 +523,6 @@ def make_criteo_data_and_loaders(args, offset_to_length_converter=False):
                 args.memory_map,
                 args.dataset_multiprocessing
             )
-
             train_loader = data_loader_terabyte.DataLoader(
                 data_directory=data_directory,
                 data_filename=data_filename,
@@ -511,7 +531,6 @@ def make_criteo_data_and_loaders(args, offset_to_length_converter=False):
                 max_ind_range=args.max_ind_range,
                 split="train"
             )
-
             test_loader = data_loader_terabyte.DataLoader(
                 data_directory=data_directory,
                 data_filename=data_filename,
@@ -595,7 +614,8 @@ class RandomDataset(Dataset):
             rand_data_max=1,
             rand_data_mu=-1,
             rand_data_sigma=1,
-            rand_seed=0
+            rand_seed=0,
+            cache_size=None,
     ):
         # compute batch size
         nbatches = int(np.ceil((data_size * 1.0) / mini_batch_size))
@@ -624,6 +644,7 @@ class RandomDataset(Dataset):
         self.rand_data_max = rand_data_max
         self.rand_data_mu = rand_data_mu
         self.rand_data_sigma = rand_data_sigma
+        self.cache_size = cache_size
 
     def reset_numpy_seed(self, numpy_rand_seed):
         np.random.seed(numpy_rand_seed)
@@ -648,9 +669,15 @@ class RandomDataset(Dataset):
 
         # generate a batch of dense and sparse features
         if self.data_generation == "random":
-            (X, lS_o, lS_i) = generate_dist_input_batch(
+            if self.cache_size is None:
+                Gen = generate_dist_input_batch.__wrapped__
+                cache_key = None
+            else:
+                Gen = generate_dist_input_batch
+                cache_key = index % self.cache_size
+            (X, lS_o, lS_i) = Gen(
                 self.m_den,
-                self.ln_emb,
+                tuple(self.ln_emb.tolist()),
                 n,
                 self.num_indices_per_lookup,
                 self.num_indices_per_lookup_fixed,
@@ -659,6 +686,7 @@ class RandomDataset(Dataset):
                 rand_data_max=self.rand_data_max,
                 rand_data_mu=self.rand_data_mu,
                 rand_data_sigma=self.rand_data_sigma,
+                cache_key=cache_key,
             )
         elif self.data_generation == "synthetic":
             (X, lS_o, lS_i) = generate_synthetic_input_batch(
@@ -676,7 +704,10 @@ class RandomDataset(Dataset):
             )
 
         # generate a batch of target (probability of a click)
-        T = generate_random_output_batch(n, self.num_targets, self.round_targets)
+        if 'cache_key' in locals() and cache_key is not None:
+            T = generate_random_output_batch(n, self.num_targets, self.round_targets, cache_key)
+        else:
+            T = generate_random_output_batch.__wrapped__(n, self.num_targets, self.round_targets)
 
         return (X, lS_o, lS_i, T)
 
@@ -705,7 +736,7 @@ def collate_wrapper_random_length(list_of_tuples):
 
 
 def make_random_data_and_loader(args, ln_emb, m_den,
-    offset_to_length_converter=False,
+    offset_to_length_converter=False, cache_size=None,
 ):
 
     train_data = RandomDataset(
@@ -727,7 +758,8 @@ def make_random_data_and_loader(args, ln_emb, m_den,
         rand_data_max=args.rand_data_max,
         rand_data_mu=args.rand_data_mu,
         rand_data_sigma=args.rand_data_sigma,
-        rand_seed=args.numpy_rand_seed
+        rand_seed=args.numpy_rand_seed,
+        cache_size=cache_size,
     )  # WARNING: generates a batch of lookups at once
 
     test_data = RandomDataset(
@@ -749,7 +781,8 @@ def make_random_data_and_loader(args, ln_emb, m_den,
         rand_data_max=args.rand_data_max,
         rand_data_mu=args.rand_data_mu,
         rand_data_sigma=args.rand_data_sigma,
-        rand_seed=args.numpy_rand_seed
+        rand_seed=args.numpy_rand_seed,
+        cache_size=cache_size,
     )
 
     collate_wrapper_random = collate_wrapper_random_offset
@@ -845,7 +878,8 @@ def generate_random_data(
     return (nbatches, lX, lS_offsets, lS_indices, lT)
 
 
-def generate_random_output_batch(n, num_targets, round_targets=False):
+@functools.lru_cache(maxsize=None)
+def generate_random_output_batch(n, num_targets, round_targets=False, cache_key=None):
     # target (probability of a click)
     if round_targets:
         P = np.round(ra.rand(n, num_targets).astype(np.float32)).astype(np.float32)
@@ -906,6 +940,7 @@ def generate_uniform_input_batch(
 
 
 # random data from uniform or gaussian ditribution (input data)
+@functools.lru_cache(maxsize=None)
 def generate_dist_input_batch(
     m_den,
     ln_emb,
@@ -917,6 +952,7 @@ def generate_dist_input_batch(
     rand_data_max,
     rand_data_mu,
     rand_data_sigma,
+    cache_key = None,
 ):
     # dense feature
     Xt = torch.tensor(ra.rand(n, m_den).astype(np.float32))
