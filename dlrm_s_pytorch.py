@@ -108,6 +108,8 @@ with warnings.catch_warnings():
 # import torch.nn.functional as Functional
 # from torch.nn.parameter import Parameter
 
+torch.autograd.set_detect_anomaly(True)
+
 exc = getattr(builtins, "IOError", "FileNotFoundError")
 
 
@@ -421,6 +423,7 @@ class DLRM_Net(nn.Module):
 
     def create_emb(self, m, ln, weighted_pooling=None):
         emb_l = nn.ModuleList()
+        emb_l2 = nn.ModuleList()
         v_W_l = []
         for i in range(0, ln.size):
             if ext_dist.my_size > 1:
@@ -467,26 +470,30 @@ class DLRM_Net(nn.Module):
                 )
                 EE.weight.requires_grad = True
 
-                # EE = nn.EmbeddingBag(n, m, mode="sum", sparse=True, device='cuda')
-                # EE.weight.requires_grad = True
-                # EE.weight.data.requires_grad = True
                 if False:
-                    # initialize embeddings
-                    # nn.init.uniform_(EE.weight, a=-np.sqrt(1 / n), b=np.sqrt(1 / n))
-                    W = np.random.uniform(
-                        low=-np.sqrt(1 / n), high=np.sqrt(1 / n), size=(n, m)
-                    ).astype(np.float32)
-                    # approach 1
-                    EE.weight.data = torch.tensor(W, requires_grad=True)
-                    # approach 2
-                    # EE.weight.data.copy_(torch.tensor(W))
-                    # approach 3
-                    # EE.weight = Parameter(torch.tensor(W),requires_grad=True)
+                    EE2 = nn.EmbeddingBag(
+                        n,
+                        m // 2,
+                        mode="sum",
+                        sparse=True,
+                        device=device,
+                        _weight=torch.empty(
+                            n,
+                            m,
+                            device=device,
+                        ).uniform_(
+                            float(-np.sqrt(1 / n)),
+                            float(np.sqrt(1 / n)),
+                        ),
+                    )
+                    EE2.weight.requires_grad = True
+
             if weighted_pooling is None:
                 v_W_l.append(None)
             else:
                 v_W_l.append(torch.ones(n, dtype=torch.float32))
             emb_l.append(EE)
+            #emb_l2.append(EE2)
         return emb_l, v_W_l
 
     def __init__(
@@ -653,7 +660,45 @@ class DLRM_Net(nn.Module):
                     per_sample_weights=per_sample_weights,
                 )
 
+                v_shape = V.shape
+
+                #V = V.view(-1)
+                V = V.clone()
+                V_copy = V.clone()
+                V0 = V[:,0::2]#.clone()
+                V1 = V[:,1::2]#.clone()
+
+                # V0_n = nn.functional.normalize(V0.clone(), dim=-1)#, inplace=False)
+                # V1_n = nn.functional.normalize(V1.clone(), dim=-1)#, inplace=False)
+                #V0_n = V0.clone() #nn.functional.softmax(V0)#, inplace=False)
+                #V1_n = V1.clone() #nn.functional.softmax(V1)#, inplace=False)
+
+                #AttentionFactor = torch.dot(V0_n.view(-1), V1_n.view(-1))
+                #AttentionFactor = torch.inner(V0_n, V1_n)
+
+                V0_n = nn.functional.softmax(V0, dim = -1)
+                V1_n = nn.functional.softmax(V1, dim = -1)
+                V0_n = nn.functional.dropout(V0_n, p=0.50, training=True, inplace=False)
+                V1_n = nn.functional.dropout(V1_n, p=0.50, training=True, inplace=False)
+
+                a = 1 + torch.sum(V0_n * V1_n, dim=-1)
+                b = 1 + torch.sum(V0_n + V1_n, dim=-1)
+                a = a.clone()
+                b = b.clone()
+                AttentionFactor = b / a #nn.functional.sigmoid(a / (1 + b))
+
+                V[:,:] *= AttentionFactor.view(-1, 1)
+                #V[:,:] *= nn.functional.normalize(AttentionFactor, dim=-1).view(-1, 1)# / 10.0
+
+                V = V.reshape(v_shape)
+
+                # V_copy[:,:] *= nn.functional.softmax(AttentionFactor, dim=-1).view(-1, 1)
+                #
+                # V2 = V2.reshape(v_shape)
+                #
+                # V1[:,::2] = V2[:,::2]
                 ly.append(V)
+                #ly.append(V2)
 
         # print(ly)
         return ly
@@ -2173,18 +2218,18 @@ if __name__ == "__main__":
     sys.argv = ['dlrm_s_pytorch.py',
             '--data-generation=dataset',
             '--data-set=terabyte',
-            '--mini-batch-size=2048',
+            '--mini-batch-size=16384',
             '--arch-mlp-bot=13-512-256-128',
             '--arch-mlp-top=1024-1024-512-256-1',
             '--arch-sparse-feature-size=128',
-            '--learning-rate=1.0',
+            '--learning-rate=1.101',
             '--mlperf-logging',
             '--raw-data-file=/home/ubuntu/mountpoint/criteo_terabyte_subsample0.0_maxind40M/day',
             '--processed-data-file=/home/ubuntu/mountpoint/criteo_terabyte_subsample0.0_maxind40M/',
             '--memory-map',
             '--loss-function=bce',
             '--test-mini-batch-size=16384',
-            '--print-freq=1024',
+            '--print-freq=32',
             '--print-time',
             '--nepoch=1',
             '--max-ind-range=40000000',
@@ -2195,4 +2240,6 @@ if __name__ == "__main__":
             # '--index-split-num=40',
             # '--tensor-board-filename=regular_one_hot_tb_dataset',
         ]
+    # run with:
+    # torchx run -s local_cwd dist.ddp -j 1x8 --script dlrm_s_pytorch.py
     run()
