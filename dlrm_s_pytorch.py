@@ -665,8 +665,9 @@ class DLRM_Net(nn.Module):
                 #V = V.view(-1)
                 V = V.clone()
                 V_copy = V.clone()
-                V0 = V[:,0::2]#.clone()
-                V1 = V[:,1::2]#.clone()
+                V0 = V[:,0::3]#.clone()
+                V1 = V[:,1::3]#.clone()
+                V2 = V[:,2::3]
 
                 # V0_n = nn.functional.normalize(V0.clone(), dim=-1)#, inplace=False)
                 # V1_n = nn.functional.normalize(V1.clone(), dim=-1)#, inplace=False)
@@ -678,14 +679,18 @@ class DLRM_Net(nn.Module):
 
                 V0_n = nn.functional.softmax(V0, dim = -1)
                 V1_n = nn.functional.softmax(V1, dim = -1)
-                V0_n = nn.functional.dropout(V0_n, p=0.50, training=True, inplace=False)
-                V1_n = nn.functional.dropout(V1_n, p=0.50, training=True, inplace=False)
+                V2_n = V2.clone()
+                V0_n = nn.functional.dropout(V0_n, p=0.80, training=True, inplace=False)
+                V1_n = nn.functional.dropout(V1_n, p=0.80, training=True, inplace=False)
+                V2_n = nn.functional.dropout(V2_n, p=0.80, training=True, inplace=False)
 
                 a = 1 + torch.sum(V0_n * V1_n, dim=-1)
                 b = 1 + torch.sum(V0_n + V1_n, dim=-1)
                 a = a.clone()
                 b = b.clone()
                 AttentionFactor = b / a #nn.functional.sigmoid(a / (1 + b))
+
+                V = V0_n * V1_n * V2_n
 
                 V[:,:] *= AttentionFactor.view(-1, 1)
                 #V[:,:] *= nn.functional.normalize(AttentionFactor, dim=-1).view(-1, 1)# / 10.0
@@ -2222,7 +2227,7 @@ if __name__ == "__main__":
             '--arch-mlp-bot=13-512-256-128',
             '--arch-mlp-top=1024-1024-512-256-1',
             '--arch-sparse-feature-size=128',
-            '--learning-rate=1.101',
+            '--learning-rate=0.2',
             '--mlperf-logging',
             '--raw-data-file=/home/ubuntu/mountpoint/criteo_terabyte_subsample0.0_maxind40M/day',
             '--processed-data-file=/home/ubuntu/mountpoint/criteo_terabyte_subsample0.0_maxind40M/',
