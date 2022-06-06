@@ -678,8 +678,8 @@ class DLRM_Net(nn.Module):
 
                 V0_n = nn.functional.softmax(V0, dim = -1)
                 V1_n = nn.functional.softmax(V1, dim = -1)
-                V0_n = nn.functional.dropout(V0_n, p=0.50, training=True, inplace=False)
-                V1_n = nn.functional.dropout(V1_n, p=0.50, training=True, inplace=False)
+                # V0_n = nn.functional.dropout(V0_n, p=0.50, training=True, inplace=False)
+                # V1_n = nn.functional.dropout(V1_n, p=0.50, training=True, inplace=False)
 
                 a = 1 + torch.sum(V0_n * V1_n, dim=-1)
                 b = 1 + torch.sum(V0_n + V1_n, dim=-1)
@@ -2218,11 +2218,11 @@ if __name__ == "__main__":
     sys.argv = ['dlrm_s_pytorch.py',
             '--data-generation=dataset',
             '--data-set=terabyte',
-            '--mini-batch-size=16384',
+            '--mini-batch-size=2048',
             '--arch-mlp-bot=13-512-256-128',
             '--arch-mlp-top=1024-1024-512-256-1',
             '--arch-sparse-feature-size=128',
-            '--learning-rate=1.101',
+            '--learning-rate=1.001',
             '--mlperf-logging',
             '--raw-data-file=/home/ubuntu/mountpoint/criteo_terabyte_subsample0.0_maxind40M/day',
             '--processed-data-file=/home/ubuntu/mountpoint/criteo_terabyte_subsample0.0_maxind40M/',
@@ -2237,7 +2237,7 @@ if __name__ == "__main__":
             '--test-freq=30000',
             '--use-gpu',
             # '--index-split-dist=normal',
-            # '--index-split-num=40',
+            # '--index-split-num=20',
             # '--tensor-board-filename=regular_one_hot_tb_dataset',
         ]
     # run with:
