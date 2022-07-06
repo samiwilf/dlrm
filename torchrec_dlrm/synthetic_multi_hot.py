@@ -214,15 +214,18 @@ def main(argv: List[str]) -> None:
 
     # Save info on dataset to dict in npy file.
     batch = next(iter(train_dataloader))
-    sparse_offsets = batch.sparse_features._offsets.reshape(-1, args.batch_size).tranpose(0,1)
+    #sparse_offsets = batch.sparse_features._offsets.reshape(-1, args.batch_size).tranpose(0,1) # <-- don't try to reduce size by reshaping. keep it simple for now until it's working.
     info_dict = {}
-    info_dict["offset"] = sparse_offsets[0]
+    info_dict["offset"] = batch.sparse_features._offsets
     info_dict["batch_size"] = args.batch_size
     info_dict["num_embeddings_per_feature"] = np.array(args.num_embeddings_per_feature)
     info_dict["dataset_name"] = args.dataset_name
     info_dict["multi_hot_distribution_type"] = args.multi_hot_distribution_type
     info_dict["random_seed_used"] = args.seed
-    np.save(args.save_path + "multi_hot_encoded_dataset_info.npy", info_dict)
+
+    print(f"Saving START")
+    np.save(args.multi_hot_save_path + "/multi_hot_encoded_dataset_info.npy", info_dict)
+    print(f"Saving DONE")
 
     dataset_iter = iter(train_dataloader)
     for it in tqdm(itertools.count(), desc=f"Save multi-hot encoded categorical data to disk"):
@@ -236,7 +239,11 @@ def main(argv: List[str]) -> None:
             # labels = batch.labels
             start_sample = it * args.batch_size
             last_sample = start_sample + args.batch_size - 1
-            np.save(args.multi_hot_save_path + f"multi_hot_encoded_samples_{start_sample}_to_{last_sample}", sparse_values )
+            file_name = args.multi_hot_save_path + f"/multi_hot_encoded_samples_{start_sample}_to_{last_sample}"
+            print(f"Saving {file_name} START")
+            np.save( file_name, sparse_values )
+            print(f"Saving {file_name} DONE")
+            #np.save(args.multi_hot_save_path + f"multi_hot_encoded_samples_{start_sample}_to_{last_sample}", sparse_values )
             #np.save(args.save_path + f"multi_hot_encoded_samples_{it * args.batch_size}_to_{(it+1) * args.batch_size - 1}", sparse_values )
         except StopIteration:
             break
@@ -252,7 +259,7 @@ def main(argv: List[str]) -> None:
 if __name__ == "__main__":
 
     sys.argv = ["synthetic_multi_hot.py",
-        #"--batch_size", 65536,
+        #"--batch_size", "65536",
         "--batch_size", "1048576",
         "--dataset_name", "criteo_1t_preprocessed_and_shuffled",
         "--num_embeddings_per_feature", "45833188,36746,17245,7413,20243,3,7114,1441,62,29275261,1572176,345138,10,2209,11267,128,4,974,14,48937457,11316796,40094537,452104,12606,104,35",
@@ -269,3 +276,10 @@ if __name__ == "__main__":
 
 # Run this script with:
 # torchx run -s local_cwd dist.ddp -j 1x8 --script synthetic_multi_hot.py
+#
+# GET SINGLE THREADED VERSION WORKING FIRST.
+# Single threaded version
+# torchx run -s local_cwd dist.ddp -j 1x1 --script synthetic_multi_hot.py
+#
+# To delete:
+# rm /home/ubuntu/mountpoint/shuffled/multi_hot_encoded*
