@@ -239,7 +239,8 @@ def main(argv: List[str]) -> None:
             # labels = batch.labels
             start_sample = it * args.batch_size
             last_sample = start_sample + args.batch_size - 1
-            file_name = args.multi_hot_save_path + f"/multi_hot_encoded_samples_{start_sample}_to_{last_sample}"
+            #file_name = args.multi_hot_save_path + f"/multi_hot_encoded_samples_{start_sample}_to_{last_sample}"
+            file_name = args.multi_hot_save_path + f"/multi_hot/rank_{rank}_batch_{it}.npy"
             print(f"Saving {file_name} START")
             np.save( file_name, sparse_values )
             print(f"Saving {file_name} DONE")
@@ -260,7 +261,7 @@ if __name__ == "__main__":
 
     sys.argv = ["synthetic_multi_hot.py",
         #"--batch_size", "65536",
-        "--batch_size", "1048576",
+        "--batch_size", "2048",
         "--dataset_name", "criteo_1t_preprocessed_and_shuffled",
         "--num_embeddings_per_feature", "45833188,36746,17245,7413,20243,3,7114,1441,62,29275261,1572176,345138,10,2209,11267,128,4,974,14,48937457,11316796,40094537,452104,12606,104,35",
         # "--seed",
@@ -270,7 +271,7 @@ if __name__ == "__main__":
         "--in_memory_binary_criteo_path", "/home/ubuntu/mountpoint/shuffled",
         "--multi_hot_size", "20",
         "--multi_hot_min_table_size", "200",
-        "--multi_hot_distribution_type", "pareto",]
+        "--multi_hot_distribution_type", "uniform",]
 
     main(sys.argv[1:])
 
