@@ -29,7 +29,7 @@ from torchrec.distributed import TrainPipelineSparseDist
 from torchrec.distributed.embeddingbag import EmbeddingBagCollectionSharder
 from torchrec.distributed.model_parallel import DistributedModelParallel
 from torchrec.distributed.types import ModuleSharder
-from torchrec.models.dlrm import DLRM, DLRMV2, DLRMTrain
+from torchrec.models.dlrm import DLRM, DLRMTrain
 from torchrec.modules.embedding_configs import EmbeddingBagConfig
 from torchrec.optim.keyed import CombinedOptimizer, KeyedOptimizerWrapper
 from tqdm import tqdm
@@ -574,18 +574,8 @@ def main(argv: List[str]) -> None:
             map(int, args.over_arch_layer_sizes.split(","))
         )
 
-    if args.dlrmv2:
-        dlrm_model = DLRMV2(
-            embedding_bag_collection=EmbeddingBagCollection(
-                tables=eb_configs, device=torch.device("meta")
-            ),
-            dense_in_features=len(DEFAULT_INT_NAMES),
-            dense_arch_layer_sizes=list(map(int, args.dense_arch_layer_sizes.split(","))),
-            over_arch_layer_sizes=list(map(int, args.over_arch_layer_sizes.split(","))),
-            interaction_branch1_layer_sizes=list(map(int, args.interaction_branch1_layer_sizes.split(","))),
-            interaction_branch2_layer_sizes=list(map(int, args.interaction_branch2_layer_sizes.split(","))),
-            dense_device=device,
-        )
+    if False:
+        pass
     else:
         dlrm_model = DLRM(
             embedding_bag_collection=EmbeddingBagCollection(
@@ -633,12 +623,13 @@ def main(argv: List[str]) -> None:
 
     if 1 < args.multi_hot_size:
         multihot = Multihot(
+            rank,
             args.multi_hot_size,
             args.multi_hot_min_table_size,
             args.num_embeddings_per_feature,
-            args.batch_size,
+            batch_size=args.batch_size,
             collect_freqs_stats=args.collect_multi_hot_freqs_stats,
-            type=args.multi_hot_distribution_type,
+            dist_type=args.multi_hot_distribution_type,
         )
         multihot.pause_stats_collection_during_val_and_test(train_pipeline._model)
         train_dataloader = RestartableMap(multihot.convert_to_multi_hot, train_dataloader)

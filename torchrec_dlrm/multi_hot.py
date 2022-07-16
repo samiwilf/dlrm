@@ -20,6 +20,7 @@ class RestartableMap:
 class Multihot():
     def __init__(
         self,
+        rank: int,
         multi_hot_size: int,
         multi_hot_min_table_size: int,
         ln_emb: List[int],
@@ -32,12 +33,14 @@ class Multihot():
                 "Multi-hot distribution type {} is not supported."
                 "Only \"uniform\" and \"pareto\" are supported.".format(dist_type)
             )
+        self.it = 0
+        self.rank = rank
         self.dist_type = dist_type
         self.multi_hot_min_table_size = multi_hot_min_table_size
         self.multi_hot_size = multi_hot_size
         self.batch_size = batch_size
         self.ln_emb = ln_emb
-        self.lS_i_offsets_cache = self.__make_multi_hot_indices_cache(multi_hot_size, ln_emb)
+        #self.lS_i_offsets_cache = self.__make_multi_hot_indices_cache(multi_hot_size, ln_emb)
         self.lS_o_cache = self.__make_offsets_cache(multi_hot_size, multi_hot_min_table_size, ln_emb, batch_size)
 
         # For plotting frequency access
@@ -70,10 +73,10 @@ class Multihot():
         cache = [ np.zeros((rows_count, multi_hot_size)) for rows_count in ln_emb ]
         for k, e in enumerate(ln_emb):
             np.random.seed(k) # The seed is necessary for all ranks to produce the same lookup values.
-            if self.dist_type == "uniform":
-                cache[k][:,1:] = np.random.randint(0, e, size=(e, multi_hot_size-1))
-            elif self.dist_type == "pareto":
-                cache[k][:,1:] = np.random.pareto(a=0.25, size=(e, multi_hot_size-1)).astype(np.int32) % e
+            # if self.dist_type == "uniform":
+            #     cache[k][:,1:] = np.random.randint(0, e, size=(e, multi_hot_size-1))
+            # elif self.dist_type == "pareto":
+            #     cache[k][:,1:] = np.random.pareto(a=0.25, size=(e, multi_hot_size-1)).astype(np.int32) % e
         # cache axes are [table, batch, offset]
         cache = [ torch.from_numpy(table_cache).int() for table_cache in cache ]
         return cache
@@ -99,22 +102,25 @@ class Multihot():
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         lS_i = lS_i.reshape(-1, self.batch_size)
         if 1 < self.multi_hot_size:
-            multi_hot_i_l = []
-            for cf, table_length in enumerate(self.ln_emb):
-                if table_length < self.multi_hot_min_table_size:
-                    multi_hot_i_l.append(lS_i[cf])
-                else:
-                    keys = lS_i[cf]
-                    multi_hot_i = torch.nn.functional.embedding(keys, self.lS_i_offsets_cache[cf])
-                    multi_hot_i[:,0] = keys
-                    multi_hot_i = multi_hot_i.reshape(-1)
-                    multi_hot_i_l.append(multi_hot_i)
-                    if self.collect_freqs_stats and (
-                        self.model_to_track is None or self.model_to_track.training
-                    ):
-                        self.freqs_pre_hash[cf][lS_i[cf]] += 1
-                        self.freqs_post_hash[cf][multi_hot_i] += 1
-            lS_i = torch.cat(multi_hot_i_l)
+            if False:
+                multi_hot_i_l = []
+                for cf, table_length in enumerate(self.ln_emb):
+                    if table_length < self.multi_hot_min_table_size:
+                        multi_hot_i_l.append(lS_i[cf])
+                    else:
+                        keys = lS_i[cf]
+                        multi_hot_i = torch.nn.functional.embedding(keys, self.lS_i_offsets_cache[cf])
+                        multi_hot_i[:,0] = keys
+                        multi_hot_i = multi_hot_i.reshape(-1)
+                        multi_hot_i_l.append(multi_hot_i)
+                        if self.collect_freqs_stats and (
+                            self.model_to_track is None or self.model_to_track.training
+                        ):
+                            self.freqs_pre_hash[cf][lS_i[cf]] += 1
+                            self.freqs_post_hash[cf][multi_hot_i] += 1
+                lS_i = torch.cat(multi_hot_i_l)
+            else:
+                lS_i = torch.from_numpy(np.load(f"/home/ubuntu/mountpoint/shuffled/multi_hot/rank_{self.rank}_batch_{self.it}.npy"))#, mmap_mode='r'))
             return self.lS_o_cache, lS_i
         else:
             lS_i = torch.cat(lS_i)
@@ -129,6 +135,7 @@ class Multihot():
             values=lS_i,
             offsets=lS_o,
         )
+        self.it += 1
         return Batch(
             dense_features=batch.dense_features,
             sparse_features=new_sparse_features,
