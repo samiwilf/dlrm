@@ -237,17 +237,23 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
         action="store_true",
         help="Flag to determine whether to collect stats on freq of embedding access.",
     )
+    # parser.add_argument(
+    #     "--multi_hot_size",
+    #     type=int,
+    #     default=1,
+    #     help="The number of Multi-hot indices to use. When 1, multi-hot is disabled.",
+    # )
+    # parser.add_argument(
+    #     "--multi_hot_min_table_size",
+    #     type=int,
+    #     default=200,
+    #     help="The minimum number of rows an embedding table must have to run multi-hot inputs.",
+    # )
     parser.add_argument(
-        "--multi_hot_size",
-        type=int,
-        default=1,
-        help="The number of Multi-hot indices to use. When 1, multi-hot is disabled.",
-    )
-    parser.add_argument(
-        "--multi_hot_min_table_size",
-        type=int,
-        default=200,
-        help="The minimum number of rows an embedding table must have to run multi-hot inputs.",
+        "--multi_hot_sizes",
+        type=str,
+        default=None,
+        help="Comma separated multihot size per sparse feature. 26 values are expected for the Criteo dataset.",
     )
     parser.add_argument(
         "--multi_hot_distribution_type",
@@ -539,11 +545,20 @@ def main(argv: List[str]) -> None:
     if not torch.distributed.is_initialized():
         dist.init_process_group(backend=backend)
 
+    if args.multi_hot_sizes is not None:
+        args.multi_hot_sizes = list(
+            map(int, args.multi_hot_sizes.split(","))
+        )
+
     if args.num_embeddings_per_feature is not None:
         args.num_embeddings_per_feature = list(
             map(int, args.num_embeddings_per_feature.split(","))
         )
         args.num_embeddings = None
+
+    for i, e in enumerate(args.num_embeddings_per_feature):
+        if e > 90000000:
+            args.num_embeddings_per_feature[i] = e // 10
 
     # TODO add CriteoIterDataPipe support and add random_dataloader arg
     train_dataloader = get_dataloader(args, backend, "train")
@@ -631,10 +646,10 @@ def main(argv: List[str]) -> None:
         device,
     )
 
-    if 1 < args.multi_hot_size:
+    #if 1 < args.multi_hot_size:
+    if True:
         multihot = Multihot(
-            args.multi_hot_size,
-            args.multi_hot_min_table_size,
+            args.multi_hot_sizes,
             args.num_embeddings_per_feature,
             args.batch_size,
             collect_freqs_stats=args.collect_multi_hot_freqs_stats,
